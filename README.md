@@ -71,8 +71,8 @@ Set `src/config.h/kMaxGrdSize` to 1024 for GTX 1080 Ti.
 
 ## TODO
 
-- [ ] Traverse all combination for gt input
-- [ ] Windows deployment
-- [ ] RPC debug
-- [ ] Tune goodness threshold for Vincenty Formula
-- [ ] Analyze 0 gooness but large error result (grd_inv, sch_dom)
+- [x] Traverse all combination for gt input
+- [x] Windows deployment
+- [x] RPC debug
+- [x] Tune goodness threshold for Vincenty Formula
+- [x] Analyze 0 gooness but large error result (grd_inv, sch_dom)
