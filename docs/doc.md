@@ -7,7 +7,7 @@
 服务端雷电定位程序位于 192.168.10.48 的 `D:\ltgpos_server`，通过命令行调用，调用时需指定端口号（1024~65535，与客户端一致即可），例如
 
 ```bash
-D:\ltgpos_server > ltgpos_server.exe 8889
+D:\ltgpos_server> ltgpos_server.exe 8889
 ```
 
 服务端由人工启动，随后一直停留在后台运行，不断接收客户端程序连接。
@@ -21,8 +21,8 @@ D:\ltgpos_server > ltgpos_server.exe 8889
 ```bash
 python src/ltgpos_client.py ^
     --addr 192.168.10.48 --port 8889 ^
-    --start_datetime 2021-05-20 06:30:21 ^
-    --end_datetime 2021-05-21 06:30:21 ^
+    --start_datetime 2021-05-20/06:30:21 ^
+    --end_datetime 2021-05-21/06:30:22 ^
     --src_table waveinfo_rs ^
     --dst_table ltgpos_2d
 ```

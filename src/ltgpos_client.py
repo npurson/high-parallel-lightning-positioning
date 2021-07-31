@@ -6,6 +6,7 @@ from typing import Tuple, List
 import pymysql
 
 import nrpc
+from tdoa import tdoa
 from utils import StationInfo, convert_slice
 
 
@@ -26,8 +27,7 @@ def parse_args():
 class LtgposClient(object):
 
     def __init__(self, args):
-
-        self.TIMESTAMP_SAVE = 'src/timestamp.json'
+        self.TIMESTAMP_SAVE = 'D:/ltgpos_client/src/timestamp.json'
         if args.alarm and os.path.isfile(self.TIMESTAMP_SAVE):
             with open(self.TIMESTAMP_SAVE) as f:
                 timestamps = json.load(f)
@@ -39,7 +39,7 @@ class LtgposClient(object):
             # host='localhost', db='thunder',
             # user='root', passwd='123456'
         )
-        args.is3d = True if args.src_table in ('waveinfo_ic', 'waveinfo_nb', 'waveinfo_pb') else False
+        args.is3d = True if args.src_table in ('waveinfo_ic', 'waveinfo_pb') else False
         self.src_cursor = self.db.cursor()
         self.tar_cursor2d = self.db.cursor()
         self.tar_cursor3d = self.db.cursor() if args.is3d else None
@@ -114,6 +114,7 @@ class LtgposClient(object):
             DATETIME = 6
             STATIONNAME = 3
             PEAKVALUE = 7
+            SLICEFILE = 12
             ret = {
                 'guid': data[GUID],
                 'datetime': ' '.join(data[DATETIME].split('_')[:-1]),
@@ -121,7 +122,8 @@ class LtgposClient(object):
                 'node': data[STATIONNAME],
                 'latitude': StationInfo[data[STATIONNAME]].latitude,
                 'longitude': StationInfo[data[STATIONNAME]].longitude,
-                'signal_strength': int(data[PEAKVALUE])
+                'signal_strength': int(data[PEAKVALUE]),
+                'slicefile': data[SLICEFILE]
             }
             self.cur_datetime = ret['datetime']
             return ret
@@ -171,7 +173,6 @@ class LtgposClient(object):
         return output
 
     def insert_ltgpos(self, data: List[dict]) -> None:
-
         output = self.ltgpos_rpc(data)
         if not output:
             return
@@ -182,7 +183,7 @@ class LtgposClient(object):
         key_map = { 'date_time': '时间', 'time': '微秒', 'latitude': '纬度', 'longitude': '经度', 'altitude': '高度',
                     'goodness': '拟合优度', 'current': '电流', 'n_involved': '参与站数', 'involvedNodes': '参与站',
                     'wave_id': '波形识别号', 'is3d': 'IS3D' }
-        key = str(tuple([key_map[k] for k in output.keys()])).replace("'", "")
+        key = str(tuple([key_map[k] for k in output.keys()])).replace('\'', '')
         value = str(tuple([v for v in output.values()]))
         sql_insert = 'INSERT INTO ' + self.args.dst_table2d + ' ' + key + ' values ' + value + ';'
 
@@ -193,20 +194,42 @@ class LtgposClient(object):
             self.db.rollback()
 
         if args.is3d:
-            # output.pop('current')
-            # key = str(tuple([key_map[k] for k in output.keys()])).replace("'", "")
-            # value = str(tuple([v for v in output.values()]))
-            # sql_insert = 'INSERT INTO ' + self.args.dst_table3d + ' ' + key + ' values ' + value + ';'
+            trigger_times, slices = [], []
+            for i in range(len(data)):
+                trigger_times.append(data[i]['microsecond'] / 1e7)
+                slicefile = data[i]['slicefile']
+                if slicefile is None:
+                    return
+                data[i]['wave_id'] = slicefile
+                slices.append(convert_slice(slicefile))
 
-            # try:
-            #     self.tar_cursor3d.execute(sql_insert)
-            #     self.db.commit()
-            # except:
-            #     self.db.rollback()
-            ...
+            print('Calling Matlab')
+            tdoas = tdoa(trigger_times, slices)
+            print('Writting to DB')
+            for tdoa_ in tdoas:
+                for i in range(len(data)):
+                    data[i]['microsecond'] = int(tdoa_[i])
+                output = self.ltgpos_rpc(sorted(data, key=lambda x: x['microsecond']))
+                if not output:
+                    return
+
+                output['is3d'] = 1
+                output['wave_id'] = data[0]['wave_id']
+                output.pop('current')
+                output.pop('is3d')
+                key = str(tuple([key_map[k] for k in output.keys()])).replace('\'', '')
+                value = str(tuple([v for v in output.values()]))
+                sql_insert = 'INSERT INTO ' + self.args.dst_table3d + ' ' + key + ' values ' + value + ';'
+
+                try:
+                    self.tar_cursor3d.execute(sql_insert)
+                    self.db.commit()
+                except:
+                    self.db.rollback()
         return
 
     def loop(self) -> None:
+
         def comb_batch(data_batch: List[dict]) -> List[List[dict]]:
             """Split a batch of data into several batches for computing."""
             data_batch = sorted(data_batch, key=lambda d:d['microsecond'])
@@ -224,6 +247,8 @@ class LtgposClient(object):
                     batch = [data]
                 prev_ms = data['microsecond']
                 prev_data = data
+            if len(batch) >= 3:
+                data_batches.append(batch)
             return data_batches
 
         data_batch = None
@@ -239,6 +264,9 @@ class LtgposClient(object):
             try:
                 datetime, data = self.fetch_data(self.src_cursor)
             except EOFError:
+                if len(data_batch) >= 3:
+                    for batch in data_batches:
+                        self.insert_ltgpos(batch)
                 return
             if datetime == prev_datetime:
                 data_batch.append(data)
